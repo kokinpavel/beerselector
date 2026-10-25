@@ -136,41 +136,51 @@ External provider identifiers must not be primary keys.
 
 ## 5. Repository Layout
 
-src/untappt_selector/
-    api/
-    telegram/
-    application/
+Current implementation:
+
+```text
+src/                        # Installed Python package; imports use src.*
+    __init__.py
+    main.py                 # FastAPI application and /health
+    core/                   # Shared settings
+    telegram/               # Bot startup, /start and /untappd routers
+    application/            # User registration and profile orchestration
     modules/
-        users/
-        history/
-        catalog/
-        menu_recognition/
-        profiles/
-        recommendations/
+        users/              # Models, contracts and profile validation
     infrastructure/
-        database/
-        integrations/
-        storage/
-        jobs/
-        logging/
-    workers/
-    core/
-
+        database/           # Async sessions and PostgreSQL repositories
+alembic/                    # Migration environment and versioned schema changes
 tests/
-    unit/
-    integration/
-    e2e/
+    unit/                   # Application, validation and handler tests
+    integration/            # PostgreSQL and Telegram update processing tests
+    test_health.py
+    test_migrations.py
+docs/                       # Project, architecture and integration documentation
+    AGENTS.md               # Single source of development instructions
+README.md                   # Setup, commands and current capabilities
+pyproject.toml
+uv.lock
+Dockerfile
+compose.yaml
+```
 
-migrations/
-scripts/
-docs/
+Run commands from the repository root. The API entry point is `src.main:app`;
+the bot entry point is `python -m src.telegram.bot`. The application package is
+included in the wheel without an additional nested project-name directory.
+Alembic adds the repository root to its import path and shares model metadata
+with the application. Moving Python files does not change migration revisions
+or require recreating the database.
 
-This is the target layout, not a guarantee that
-all directories already exist.
+Planned modules, not yet implemented: `modules/history`, `modules/catalog`,
+`modules/menu_recognition`, `modules/profiles`, `modules/recommendations`,
+`infrastructure/integrations`, `infrastructure/storage`, `infrastructure/jobs`,
+and `workers`. Add `api` routers when there are endpoints beyond the current
+health check. Add `tests/e2e` when the end-to-end product flow exists.
+Do not create empty directories for future features.
 
 ## 6. Technology Decisions
 
-Application language: Python 3.12.
+Application language: Python 3.14.
 
 API: FastAPI.
 

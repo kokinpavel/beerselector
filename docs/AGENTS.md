@@ -1,4 +1,3 @@
-
 # UntapptSelector — Agent Instructions
 
 ## Project Context
@@ -14,9 +13,14 @@ by that user.
 Before implementing features or making architectural changes,
 read these documents:
 
-1. PROJECT.md — product vision, MVP scope, requirements.
-2. ARCHITECTURE.md — system design and component boundaries.
-3. README.md — current setup and development commands.
+1. `docs/PROJECT.md` — product vision, MVP scope, requirements.
+2. `docs/ARCHITECTURE.md` — system design and component boundaries.
+3. `README.md` in the repository root — current setup and development commands.
+
+All paths above are relative to the repository root. The application is the `src`
+Python package; use imports such as `from src.core.config import get_settings`.
+Run the API with `uv run uvicorn src.main:app --reload` and the bot with
+`uv run python -m src.telegram.bot` from the repository root.
 
 If a document is missing, report it. Do not invent its contents.
 
@@ -69,7 +73,7 @@ or unnecessary infrastructure without approval.
 
 Preferred stack:
 
-- Python 3.12
+- Python 3.14
 - FastAPI
 - aiogram 3
 - PostgreSQL

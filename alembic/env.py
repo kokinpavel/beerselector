@@ -6,8 +6,9 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
-from untappt_selector.core.config import get_settings
-from untappt_selector.infrastructure.database.base import Base
+from src.core.config import get_settings
+from src.infrastructure.database.base import Base
+from src.modules.users.models import User  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

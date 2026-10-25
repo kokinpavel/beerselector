@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
-from untappt_selector.main import app
+
+from src.main import app
+
 
 def test_health():
     response = TestClient(app).get("/health")

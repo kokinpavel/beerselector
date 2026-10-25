@@ -134,10 +134,22 @@ Data architecture has been designed.
 
 Infrastructure scaffolding is in progress.
 
+Telegram `/start` persists internal users. In private chats, `/untappd username`
+or a profile URL saves an unverified external profile; `/untappd` shows it.
+Profile changes, user isolation, concurrent commands and migrations are covered
+by automated tests against a disposable PostgreSQL database.
+
 The full end-to-end MVP is not yet implemented.
 
-Untappd history acquisition without Premium or CSV
-remains an unresolved integration risk.
+Untappd history acquisition is blocked pending a commercial agreement.
+The developer-portal notice supplied by the project owner states that new API
+access requires a commercial agreement and existing tokens may stop working.
+
+The official API documents history access, but project credentials and permission
+for persistent storage and personalized analysis are not verified. Published API
+terms restrict caching, beer database creation and analytics. See
+[the integration findings](untappd-integration.md). Saving a username does not import history or prove
+account ownership.
 
 Update this section only when implementation progress
 has actually been verified.

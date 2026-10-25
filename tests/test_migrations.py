@@ -7,7 +7,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from alembic import command
-from untappt_selector.core.config import get_settings
+from src.core.config import get_settings
 
 
 def migration_config() -> Config:
@@ -16,7 +16,7 @@ def migration_config() -> Config:
 
 def test_single_baseline_head():
     scripts = ScriptDirectory.from_config(migration_config())
-    assert scripts.get_heads() == ["0001"]
+    assert scripts.get_heads() == ["0003"]
     assert scripts.get_revision("0001").down_revision is None
 
 
@@ -31,9 +31,13 @@ def test_offline_upgrade_and_downgrade(monkeypatch):
         command.upgrade(config, "head", sql=True)
         assert "CREATE TABLE alembic_version" in output.getvalue()
         assert "INSERT INTO alembic_version" in output.getvalue()
+        assert "CREATE TABLE users" in output.getvalue()
+        assert "CREATE TABLE external_accounts" in output.getvalue()
         output.seek(0)
         output.truncate()
-        command.downgrade(config, "0001:base", sql=True)
+        command.downgrade(config, "0003:base", sql=True)
+        assert "DROP TABLE external_accounts" in output.getvalue()
+        assert "DROP TABLE users" in output.getvalue()
         assert "DELETE FROM alembic_version" in output.getvalue()
     finally:
         get_settings.cache_clear()
