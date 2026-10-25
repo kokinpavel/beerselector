@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: untappt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-untappt}
+      POSTGRES_DB: untappt
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U untappt -d untappt"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://untappt:${POSTGRES_PASSWORD:-untappt}@db:5432/untappt
+      APP_ENV: development
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres_data:
