@@ -6,6 +6,8 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY alembic.ini ./
+COPY alembic ./alembic
 
 RUN uv pip install --system .
 
