@@ -1,21 +1,13 @@
 from typing import Protocol
 
+from src.modules.menu_recognition.menu import MenuDraft
+
 
 class RecognitionError(Exception):
-    """An image could not be read by the configured OCR engine."""
+    """The menu could not be recognized or the model response is invalid."""
 
 
-class OcrUnavailable(RecognitionError):
-    """The OCR executable or language data is unavailable."""
+class MenuRecognizer(Protocol):
+    async def execute(self, image: bytes, caption: str = "") -> MenuDraft: ...
 
-
-class ImageTextReader(Protocol):
-    async def read(self, image: bytes) -> str: ...
-
-
-class CleanupError(RecognitionError):
-    """The LLM could not produce a validated list of beer names."""
-
-
-class BeerNameCleaner(Protocol):
-    async def clean(self, text: str) -> list[str]: ...
+    async def clean_text(self, text: str, caption: str = "") -> MenuDraft: ...

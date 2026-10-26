@@ -4,7 +4,6 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import SimpleEventIsolation
 
-from src.application.recognize_menu import RecognizeMenu
 from src.application.start import StartUser
 from src.application.untappd import ManageUntappdProfile
 from src.core.config import get_settings
@@ -13,8 +12,7 @@ from src.infrastructure.database.external_accounts import (
 )
 from src.infrastructure.database.session import SessionLocal, engine
 from src.infrastructure.database.users import PostgresUserRepository
-from src.infrastructure.llm.ollama import OllamaBeerNameCleaner
-from src.infrastructure.ocr.tesseract import TesseractReader
+from src.infrastructure.llm.menu import OllamaMenuRecognizer
 from src.telegram.menu import create_menu_router
 from src.telegram.start import create_start_router
 from src.telegram.untappd import create_untappd_router
@@ -40,24 +38,12 @@ async def main() -> None:
         )
     )
     dp.include_router(
-        create_menu_router(
-            RecognizeMenu(
-                TesseractReader(
-                    executable=settings.ocr_executable,
-                    languages=settings.ocr_languages,
-                    page_segmentation=settings.ocr_page_segmentation,
-                ),
-                OllamaBeerNameCleaner(
-                    base_url=settings.ollama_base_url,
-                    model=settings.ollama_model,
-                ),
-            )
-        )
+        create_menu_router(OllamaMenuRecognizer(settings.ollama_base_url, settings.ollama_model))
     )
 
     try:
         logging.getLogger(__name__).info(
-            "Starting Telegram polling; OCR languages=%s", settings.ocr_languages
+            "Starting Telegram polling; recognition=%s", settings.ollama_model
         )
         await dp.start_polling(bot)
     finally:

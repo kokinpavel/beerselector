@@ -3,7 +3,7 @@
 Telegram assistant for choosing beer from a photographed menu and the user's current wishes.
 
 Implemented: PostgreSQL user registration through `/start`, user-supplied Untappd
-profiles through `/untappd`, local photo OCR, LLM extraction of beer names, optional menu correction,
+profiles through `/untappd`, local Qwen3-VL menu recognition, optional menu correction,
 a FastAPI health endpoint, and Alembic migrations.
 Preference interpretation and recommendations are the next step. The main flow
 does not require an Untappd account or rating history.
@@ -19,9 +19,9 @@ src/
     telegram/               # Bot startup and command handlers
     application/            # User workflows
     modules/users/          # User models and optional external profiles
-    modules/menu_recognition/ # OCR contracts, menu rows and draft validation
+    modules/menu_recognition/ # Menu contracts and draft validation
     infrastructure/database/ # SQLAlchemy sessions and repositories
-    infrastructure/ocr/     # Local Tesseract adapter
+    infrastructure/llm/     # Qwen3-VL through Ollama
 alembic/                    # Schema migrations
 tests/                      # Unit and PostgreSQL integration tests
 docs/                       # Product, architecture and integration notes
@@ -46,7 +46,6 @@ from the repository root. See [architecture](docs/ARCHITECTURE.md),
    DATABASE_URL=postgresql+asyncpg://untappt:untappt@localhost:5432/untappt
    POSTGRES_PASSWORD=untappt
    TELEGRAM_BOT_TOKEN=your_botfather_token
-   OLLAMA_MODEL=qwen2.5:3b
    APP_ENV=development
    LOG_LEVEL=INFO
    ```
@@ -61,17 +60,17 @@ from the repository root. See [architecture](docs/ARCHITECTURE.md),
    uv run alembic upgrade head
    ```
 
-5. Build and run the bot in Docker, including English/Russian Tesseract:
+5. Build and run the bot and Qwen3-VL 4B service in Docker:
 
    ```sh
-   docker compose build bot
+   docker compose --profile bot build bot
    docker compose --profile bot up -d bot
    docker compose logs -f bot
    ```
 
    Compose passes `TELEGRAM_BOT_TOKEN` from `.env` to the bot container and uses
    `db:5432` for PostgreSQL. No Homebrew installation or native OCR is needed on
-   the host. Optional setting: `OCR_LANGUAGES=eng+rus` in `.env`.
+   the host. Model weights are downloaded on the first service startup.
    Stop any locally running polling process before starting the container.
    Stop the container with `docker compose stop bot`.
 
@@ -80,56 +79,33 @@ from the repository root. See [architecture](docs/ARCHITECTURE.md),
 
 ## Photo recognition
 
-In a private chat, send one clear photo of a menu (or a JPEG/PNG/WebP image as a file, without Telegram compression). The bot downloads the largest
-Telegram photo, runs local Tesseract, then sends its text to the LLM and shows
-only extracted beer names. Raw OCR, prices, volumes and ABV are not shown.
-No confirmation is required.
-The optional caption is kept with the draft for future preference handling;
-it does not affect recognition or trigger recommendations yet.
+Send a menu photo or JPEG/PNG/WebP file in a private chat. The bot passes the
+image directly to **Qwen3-VL 4B Instruct** using Ollama's `/api/chat` endpoint.
+The same model extracts names and corrects clear recognition/spelling errors in
+one call. Text submitted through `/editmenu` uses the same model without an image.
+No Tesseract or paid API participates in this path.
 
-- Optionally use `/editmenu`, then send the entire corrected list, one item per line.
-- No confirmation command is required; the recognized list is available immediately.
-- `/menu` displays the current list.
-- `/editmenu` starts manual entry or editing, including when OCR is unavailable.
-- `/cancel` deletes the current draft.
+Default: `OLLAMA_MODEL=qwen3-vl:4b-instruct`. Ollama must be version 0.12.7 or newer.
+Compose starts Ollama and downloads the model before starting the bot. Weights
+are cached in `ollama_data`; the initial model download is approximately 3.3 GB.
+CPU inference requires additional RAM and can be slow. Set `OLLAMA_MODEL` in
+`.env` explicitly if an older value is already configured.
+Model reference: https://ollama.com/library/qwen3-vl:4b-instruct
 
-Before OCR, Pillow fixes EXIF orientation, enlarges small images, normalizes contrast
-and sharpens text. Tesseract defaults to automatic page layout (`OCR_PAGE_SEGMENTATION=3`);
-`6` (one block) or `11` (sparse text) can be selected in `.env` for a particular menu.
-The prepared-image pass is compared with an original-image block pass using
-Tesseract word confidence (a heuristic, not a probability of correctness).
-These changes do not guarantee correct recognition of skewed or complex menus.
+The model receives an extraction instruction and a JSON schema. Output must be
+complete and pass count/length validation. Prices, ABV and volumes should be
+omitted, meaningful numbers in names retained. Instructions permit only clear
+corrections and forbid inventing products. Structural validation does not prove
+that a name appears in the photo; real menu accuracy still needs evaluation.
+There is no fallback to another model or to unvalidated raw output.
 
-The LLM cleaner uses the local Ollama chat API with a JSON schema, then
-validates source-line references, name words and duplicate entries. It removes
-menu headings, descriptions, prices, ABV/IBU and volumes. Meaningful numbers in
-product names (such as Rochefort 10) remain. It does not look up brands or guess
-missing names; uncertain/unreadable names should be omitted. These checks reduce
-but cannot eliminate incorrect extraction or omissions from poor OCR.
-
-The production bot uses local Ollama, default model `qwen2.5:3b`. No API key,
-prepaid balance or paid cloud call is required. The old OpenAI adapter remains
-available in code for tests but is not instantiated by the bot; there is no
-fallback to a paid provider. Existing `OPENAI_*` entries in `.env` are unused.
-
-Compose starts `ollama`, waits for it to be healthy, then `ollama-init` downloads
-`OLLAMA_MODEL` before the bot starts. The model is saved in `ollama_data` and is
-reused on subsequent runs. Initial setup downloads the server image plus about
-1.9 GB of model weights. Local CPU inference consumes RAM/CPU and may be slow;
-allow the bot time to finish. The local cleanup deadline is 180 seconds.
-
-OCR text stays in the Docker network and is not sent to OpenAI. Ollama has no
-published host port. Caption and Telegram identity are not included in the LLM
-request. API/validation failures never fall back to raw OCR in Telegram.
-Manual corrections also pass through the local cleaner.
-
-Limits: 10 MB per photo, 30-second OCR timeout, 60 rows, 300 characters per row.
-Truncation is reported. Tesseract processes one photo at a time. OCR runs in a
-subprocess without blocking the event loop; a timeout kills and reaps it.
-Images are not retained. Raw OCR and corrections remain in per-user, per-chat
-in-memory FSM state, and disappear when the bot restarts. This is not durable
-menu storage or a background-job system. New photos replace the current draft
-only after successful processing. This change adds no database tables.
+Use `/menu` to display the draft, `/editmenu` to replace it, and `/cancel` to
+delete it. The caption is stored but is not sent to the model. Drafts live in
+per-chat memory and disappear on restart. Photos are not saved. For photos,
+`raw_text` contains the model JSON rather than a separate OCR transcription.
+Limits: 10 MB per photo, 60 names, 300 characters per name, 180 seconds per request.
+A timeout stops waiting but does not guarantee Ollama has cancelled inference.
+Ollama has no published host port. Mocked tests do not establish photo quality.
 
 ## Bot commands
 
@@ -152,12 +128,12 @@ docker compose up -d app
 ```
 
 The `app` service runs the API. The optional `bot` profile runs Telegram polling
-and OCR in the same application image, with Tesseract installed at build time:
+and a separate Ollama inference service:
 
 ```sh
-docker compose build bot
+docker compose --profile bot build bot
 docker compose --profile bot up -d bot
-docker compose logs -f bot ollama-init ollama
+docker compose logs -f bot ollama
 ```
 
 The Telegram token and local model setting are read from `.env` by Compose; no manual export is required. Run only
@@ -207,27 +183,32 @@ Existing databases keep their data during the package restructure; no reset is n
 ```sh
 uv run pytest
 uv run ruff check .
+uv run ruff format --check .
 uv run mypy src
 uv build
 ```
 
-OCR, LLM API and Telegram calls are mocked in ordinary tests; passing them does
-not establish recognition quality on real photos. Real OCR runs in the Docker image; no host installation is required.
+Ollama and Telegram calls are mocked in ordinary tests; passing them does
+not establish recognition quality on real photos. Real Qwen3-VL inference requires the separate Docker service and model download.
+
+Ruff is included in `uv sync --extra dev`. It checks imports, common errors,
+Python upgrades and likely bugs; `uv run ruff check --fix .` applies safe fixes,
+and `uv run ruff format .` formats code. Both checks run in GitHub Actions.
+VS Code recommends the Ruff extension and enables formatting on save for Python;
+accept the workspace extension recommendation to enable editor diagnostics.
 
 PostgreSQL tests are skipped unless `TEST_DATABASE_URL` points to a disposable
 PostgreSQL database using `postgresql+asyncpg://`. They apply and roll back
 migrations, including dropping application tables. Never point this variable at
 your working or production database. Telegram API calls are mocked in tests.
 
-## Local LLM troubleshooting
+## Local model troubleshooting
 
 ```sh
 docker compose --profile bot ps -a
-docker compose exec ollama ollama list
-docker compose logs --tail 50 ollama-init ollama bot
+docker compose logs --tail 50 ollama bot
 ```
 
-If a model download fails, rerun `docker compose --profile bot up -d bot`.
-To choose another locally available Ollama model, set `OLLAMA_MODEL` in `.env`
-and recreate the bot with `docker compose --profile bot up -d --build bot`.
-Do not use `docker compose down -v` to restart: it deletes stored models and DB data.
+Start Docker Desktop before building. Retry failed downloads with
+`docker compose --profile bot up -d --build bot`.
+Do not use `docker compose down -v`: it deletes model and database volumes.

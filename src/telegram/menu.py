@@ -8,9 +8,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Document, Message, PhotoSize
 
-from src.application.recognize_menu import MAX_IMAGE_BYTES, RecognizeMenu
-from src.modules.menu_recognition.contracts import CleanupError, OcrUnavailable, RecognitionError
-from src.modules.menu_recognition.menu import MenuDraft
+from src.modules.menu_recognition.contracts import (
+    MenuRecognizer,
+    RecognitionError,
+)
+from src.modules.menu_recognition.menu import MAX_IMAGE_BYTES, MenuDraft
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,7 @@ async def show_draft(message: Message, draft: MenuDraft) -> None:
         await message.answer("Часть текста не поместилась. Отправь меню меньшими фрагментами.")
 
 
-def create_menu_router(recognize: RecognizeMenu) -> Router:
+def create_menu_router(recognize: MenuRecognizer) -> Router:
     router = Router()
     router.message.filter(F.chat.type == "private")
 
@@ -76,17 +78,6 @@ def create_menu_router(recognize: RecognizeMenu) -> Router:
             buffer = io.BytesIO()
             await bot.download(largest, destination=buffer, timeout=30)
             draft = await recognize.execute(buffer.getvalue(), message.caption or "")
-        except CleanupError:
-            logger.warning("Beer-name cleanup unavailable")
-            await message.answer("Не удалось выделить названия пива. Попробуй позже.")
-            return
-        except OcrUnavailable:
-            logger.error("Menu OCR unavailable: check Tesseract and configured languages")
-            await message.answer(
-                "Распознавание пока недоступно: нужен Tesseract с языками OCR. "
-                "Можно ввести список текстом после /editmenu."
-            )
-            return
         except RecognitionError, TelegramAPIError, OSError, TimeoutError:
             logger.warning("Menu photo could not be processed")
             await message.answer(
@@ -112,10 +103,10 @@ def create_menu_router(recognize: RecognizeMenu) -> Router:
             draft = await recognize.clean_text(
                 message.text or "", previous.caption if previous else ""
             )
-        except CleanupError:
+        except RecognitionError:
             await message.answer("Не удалось выделить названия пива. Попробуй позже.")
             return
-        # Preserve the original OCR text separately from the corrected list.
+        # Keep the original recognition result when editing the draft.
         if previous:
             draft.raw_text = previous.raw_text
         await state.set_data({"draft": draft.model_dump()})

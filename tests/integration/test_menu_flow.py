@@ -8,8 +8,8 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import SimpleEventIsolation
 from aiogram.types import Chat, Document, Message, PhotoSize, Update, User
 
-from src.application.recognize_menu import RecognizeMenu
-from src.modules.menu_recognition.contracts import OcrUnavailable
+from src.modules.menu_recognition.contracts import RecognitionError
+from src.modules.menu_recognition.menu import MenuDraft, MenuItem
 from src.telegram.menu import create_menu_router
 
 
@@ -46,16 +46,23 @@ def replies(bot):
 async def test_photo_returns_list_without_confirmation_and_optional_editing(
     monkeypatch, as_document
 ):
-    reader = SimpleNamespace(
-        read=AsyncMock(return_value="BEER MENU\nWest Tripel 8.5%\nLocal IPA 6%")
-    )
-    cleaner = SimpleNamespace(
-        clean=AsyncMock(
-            side_effect=[["West Tripel", "Local IPA"], ["Corrected Tripel", "Unknown Beer"]]
-        )
+    recognize = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=MenuDraft(
+                raw_text="BEER MENU\nWest Tripel 8.5%\nLocal IPA 6%",
+                items=[MenuItem(text="West Tripel"), MenuItem(text="Local IPA")],
+                caption="крепкое типа бельгия",
+            )
+        ),
+        clean_text=AsyncMock(
+            return_value=MenuDraft(
+                raw_text="Corrected Tripel 9%\nUnknown Beer",
+                items=[MenuItem(text="Corrected Tripel"), MenuItem(text="Unknown Beer")],
+            )
+        ),
     )
     dispatcher = Dispatcher(events_isolation=SimpleEventIsolation())
-    dispatcher.include_router(create_menu_router(RecognizeMenu(reader, cleaner)))
+    dispatcher.include_router(create_menu_router(recognize))
     bot = Bot(token="123456:test-token", session=AsyncMock())
 
     async def download(file, destination, **kwargs):
@@ -65,7 +72,7 @@ async def test_photo_returns_list_without_confirmation_and_optional_editing(
     key = StorageKey(bot_id=bot.id, chat_id=42, user_id=42)
     try:
         await send(dispatcher, bot, photo=not as_document, document=as_document)
-        reader.read.assert_awaited_once_with(b"synthetic-image")
+        recognize.execute.assert_awaited_once_with(b"synthetic-image", "крепкое типа бельгия")
         data = await dispatcher.storage.get_data(key)
         assert data["draft"]["caption"] == "крепкое типа бельгия"
         assert "confirmed" not in data["draft"]
@@ -82,7 +89,6 @@ async def test_photo_returns_list_without_confirmation_and_optional_editing(
         data = await dispatcher.storage.get_data(key)
         assert data["draft"]["raw_text"].startswith("BEER MENU")
         assert data["draft"]["items"][0]["text"] == "Corrected Tripel"
-        assert data["draft"]["items"][0]["abv"] is None
         assert await dispatcher.storage.get_state(key) is None
         assert all("/confirm" not in text for text in replies(bot))
         await send(dispatcher, bot, "/cancel")
@@ -92,11 +98,15 @@ async def test_photo_returns_list_without_confirmation_and_optional_editing(
         await bot.session.close()
 
 
-async def test_missing_ocr_allows_manual_entry(monkeypatch):
-    reader = SimpleNamespace(read=AsyncMock(side_effect=OcrUnavailable()))
-    cleaner = SimpleNamespace(clean=AsyncMock(return_value=["Beer"]))
+async def test_recognition_failure_allows_manual_entry(monkeypatch):
+    recognize = SimpleNamespace(
+        execute=AsyncMock(side_effect=RecognitionError()),
+        clean_text=AsyncMock(
+            return_value=MenuDraft(raw_text="Beer", items=[MenuItem(text="Beer")])
+        ),
+    )
     dispatcher = Dispatcher()
-    dispatcher.include_router(create_menu_router(RecognizeMenu(reader, cleaner)))
+    dispatcher.include_router(create_menu_router(recognize))
     bot = Bot(token="123456:test-token", session=AsyncMock())
 
     async def download(file, destination, **kwargs):
@@ -105,7 +115,7 @@ async def test_missing_ocr_allows_manual_entry(monkeypatch):
     monkeypatch.setattr(bot, "download", download)
     try:
         await send(dispatcher, bot, photo=True)
-        assert "нужен Tesseract" in replies(bot)[-1]
+        assert "Не удалось прочитать фото" in replies(bot)[-1]
         await send(dispatcher, bot, "/editmenu")
         await send(dispatcher, bot, "Beer 8%")
         assert any("Распознано позиций: 1" in text for text in replies(bot))
@@ -114,11 +124,10 @@ async def test_missing_ocr_allows_manual_entry(monkeypatch):
         await bot.session.close()
 
 
-async def test_blank_ocr_reports_empty_result_without_confirmation(monkeypatch):
-    reader = SimpleNamespace(read=AsyncMock(return_value=""))
-    cleaner = SimpleNamespace(clean=AsyncMock(return_value=[]))
+async def test_empty_recognition_reports_empty_result_without_confirmation(monkeypatch):
+    recognize = SimpleNamespace(execute=AsyncMock(return_value=MenuDraft(raw_text="", items=[])))
     dispatcher = Dispatcher()
-    dispatcher.include_router(create_menu_router(RecognizeMenu(reader, cleaner)))
+    dispatcher.include_router(create_menu_router(recognize))
     bot = Bot(token="123456:test-token", session=AsyncMock())
 
     async def download(file, destination, **kwargs):
@@ -134,13 +143,10 @@ async def test_blank_ocr_reports_empty_result_without_confirmation(monkeypatch):
         await bot.session.close()
 
 
-async def test_llm_failure_never_sends_raw_ocr(monkeypatch):
-    from src.modules.menu_recognition.contracts import CleanupError
-
-    reader = SimpleNamespace(read=AsyncMock(return_value="SECRET RAW MENU 500 руб 8%"))
-    cleaner = SimpleNamespace(clean=AsyncMock(side_effect=CleanupError()))
+async def test_llm_failure_never_sends_model_output(monkeypatch):
+    recognize = SimpleNamespace(execute=AsyncMock(side_effect=RecognitionError("SECRET 500")))
     dispatcher = Dispatcher()
-    dispatcher.include_router(create_menu_router(RecognizeMenu(reader, cleaner)))
+    dispatcher.include_router(create_menu_router(recognize))
     bot = Bot(token="123456:test-token", session=AsyncMock())
 
     async def download(file, destination, **kwargs):
@@ -149,7 +155,7 @@ async def test_llm_failure_never_sends_raw_ocr(monkeypatch):
     monkeypatch.setattr(bot, "download", download)
     try:
         await send(dispatcher, bot, photo=True)
-        assert "Не удалось выделить названия" in replies(bot)[-1]
+        assert "Не удалось прочитать фото" in replies(bot)[-1]
         assert all("SECRET" not in text and "500" not in text for text in replies(bot))
     finally:
         await dispatcher.storage.close()
