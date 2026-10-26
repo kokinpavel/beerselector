@@ -1,256 +1,134 @@
-
 # UntapptSelector — System Architecture
 
-## 1. Architectural Style
+## Architectural style
 
-The system is a modular monolith.
+A modular Python monolith. Telegram and FastAPI are separate entry processes
+from the same codebase. PostgreSQL stores users and optional external profiles.
+The core photo-recognition flow has no dependency on Untappd or a beer catalog.
 
-One Python codebase hosts the application and its modules.
-
-A separate background worker process may use the same
-codebase and PostgreSQL database.
-
-Do not introduce independent microservices by default.
-
-## 2. System Components
-
-### Telegram Adapter
-
-Responsible for:
-- Receiving Telegram messages.
-- Accepting photos.
-- Managing conversation states.
-- Displaying recognition results.
-- Displaying recommendations.
-
-Does not implement domain algorithms.
-
-### Application Core
-
-Responsible for:
-- Orchestrating user workflows.
-- Coordinating modules.
-- Managing application operations.
-- Handling errors and state transitions.
-
-### History Integration
-
-Responsible for:
-- Connecting to a permitted rating data source.
-- Retrieving historical ratings.
-- Normalizing imported records.
-- Synchronizing rating history.
-
-Implementation must not rely on Premium CSV exports.
-
-### Menu Recognition
-
-Pipeline:
-
-Image Input
-  -> Image Preprocessing
-  -> OCR
-  -> Text Structuring
-  -> Beer Entity Extraction
-  -> Beer Matching
-  -> User Confirmation
-  -> Confirmed Candidates
-
-Preserve uncertainty and original OCR text.
-
-### Beer Catalog
-
-Responsible for:
-- Canonical beer entities.
-- Breweries.
-- Beer aliases.
-- Beer identifiers.
-- Matching menu entries to beer records.
-
-### User Profiles
-
-Responsible for:
-- Historical user ratings.
-- Derived personal taste profiles.
-- Updating profiles when data changes.
-
-### Recommendation Engine
-
-Inputs:
-- User rating history or derived taste profile.
-- Confirmed candidate beers.
-
-Outputs:
-- Ranked recommendations.
-- Personal preference scores.
-- Explanations.
-
-The engine is independent of Telegram and OCR.
-
-## 3. Primary Data Flow
-
-Untappd History
-    -> History Adapter
-    -> Rating Normalization
-    -> PostgreSQL
-    -> Taste Profile
-
-Telegram Photo
-    -> Menu Recognition
-    -> Beer Matching
-    -> User Confirmation
-    -> Confirmed Candidates
-
-Taste Profile + Confirmed Candidates
-    -> Recommendation Engine
-    -> Ranked Results
-    -> Telegram Bot
-
-## 4. Data Storage
-
-Primary database: PostgreSQL.
-
-Main entities:
-
-- users
-- external_accounts
-- breweries
-- beers
-- beer_aliases
-- external_beer_ids
-- user_ratings
-- taste_profiles
-- menus
-- menu_photos
-- menu_items
-- recommendation_runs
-- recommendation_items
-
-Background job infrastructure may add a jobs table.
-
-Store uploaded images separately from relational records.
-
-Use internal UUID identifiers.
-
-External provider identifiers must not be primary keys.
-
-## 5. Repository Layout
-
-Current implementation:
+## Current photo flow
 
 ```text
-src/                        # Installed Python package; imports use src.*
-    __init__.py
-    main.py                 # FastAPI application and /health
-    core/                   # Shared settings
-    telegram/               # Bot startup, /start and /untappd routers
-    application/            # User registration and profile orchestration
+Telegram photo
+  -> in-memory download
+  -> RecognizeMenu application operation
+  -> ImageTextReader interface
+  -> Pillow: EXIF orientation, resizing, contrast, sharpening
+  -> local Tesseract subprocess (English + Russian)
+  -> BeerNameCleaner interface
+  -> Ollama chat API (JSON schema)
+  -> validated names
+  -> MenuDraft: internal raw OCR, names, caption
+  -> immediate list
+  -> optional correction
+```
+
+Tesseract is replaceable through `ImageTextReader`. The Telegram adapter handles
+messages and state; it contains no OCR or recommendation algorithm. The application
+validates size and coordinates recognition; the LLM adapter removes non-name information and validates the result without
+external beer lookups. Raw OCR is never a user-visible fallback.
+
+The caption is stored for later wish interpretation. Preference parsing and ranking
+are not part of this implementation.
+
+## Repository structure and responsibilities
+
+```text
+src/
+    main.py                     # FastAPI /health and request logging
+    core/config.py              # Environment and .env settings
+    telegram/
+        bot.py                  # Composition and polling startup
+        start.py                # Registration command
+        untappd.py              # Optional legacy profile commands
+        menu.py                 # Photo/file download, immediate list and optional editing
+    application/
+        start.py                # User registration operation
+        untappd.py              # Optional external-profile operation
+        recognize_menu.py       # Image validation and OCR coordination
     modules/
-        users/              # Models, contracts and profile validation
+        users/                  # Models, repository contracts and profile parsing
+        menu_recognition/       # OCR contract/errors, draft model and line parser
     infrastructure/
-        database/           # Async sessions and PostgreSQL repositories
-alembic/                    # Migration environment and versioned schema changes
+        database/               # Async sessions and PostgreSQL repositories
+        ocr/tesseract.py        # Local OCR subprocess adapter
+        llm/ollama.py           # Local structured extraction
+        # Shared schema and validation: modules/menu_recognition/beer_names.py
+alembic/                        # Schema migration environment and revisions
 tests/
-    unit/                   # Application, validation and handler tests
-    integration/            # PostgreSQL and Telegram update processing tests
-    test_health.py
-    test_migrations.py
-docs/                       # Project, architecture and integration documentation
-    AGENTS.md               # Single source of development instructions
-README.md                   # Setup, commands and current capabilities
+    unit/                       # Parsing, application and adapter tests
+    integration/                # Telegram flows and optional PostgreSQL tests
+docs/
+    AGENTS.md                   # Single source of development instructions
+README.md                       # Installation and commands
 pyproject.toml
 uv.lock
 Dockerfile
 compose.yaml
 ```
 
-Run commands from the repository root. The API entry point is `src.main:app`;
-the bot entry point is `python -m src.telegram.bot`. The application package is
-included in the wheel without an additional nested project-name directory.
-Alembic adds the repository root to its import path and shares model metadata
-with the application. Moving Python files does not change migration revisions
-or require recreating the database.
+The installed package is `src`; use `src.*` imports. Run the API with
+`uv run uvicorn src.main:app --reload`, the bot with
+`docker compose --profile bot up -d --build bot`. Run commands from the repository root.
 
-Planned modules, not yet implemented: `modules/history`, `modules/catalog`,
-`modules/menu_recognition`, `modules/profiles`, `modules/recommendations`,
-`infrastructure/integrations`, `infrastructure/storage`, `infrastructure/jobs`,
-and `workers`. Add `api` routers when there are endpoints beyond the current
-health check. Add `tests/e2e` when the end-to-end product flow exists.
-Do not create empty directories for future features.
+## State, storage and concurrency
 
-## 6. Technology Decisions
+`users` and `external_accounts` use UUID primary keys and Alembic migrations.
+`alembic_version` records the current revision. Recognition adds no tables.
 
-Application language: Python 3.14.
+Menu drafts use aiogram MemoryStorage with per-user/per-chat keys. SimpleEventIsolation
+serializes updates for the same FSM key. New photos replace a draft after success;
+failed recognition preserves the previous draft. Raw OCR remains separate from the
+corrected list. `/cancel` clears it. No confirmation step exists; editing starts only with `/editmenu`.
+Drafts are lost on process restart and are not shared between processes.
+Images are kept only during processing and are not stored or sent to an external OCR API. Bounded OCR text is sent to the local Ollama service;
+photos, captions and Telegram identities are not sent to the LLM. No paid cloud API is used.
 
-API: FastAPI.
+Prepared-image automatic layout and original-image block layout are compared
+using length-weighted OCR confidence. There is a 30-second deadline for the whole
+recognition operation.
 
-Telegram: aiogram 3.
+A semaphore allows one OCR subprocess at a time; async subprocess I/O keeps the
+bot event loop responsive. Timeout/cancellation terminates and reaps the child.
+No persistent background jobs, automatic retries or durable menu sessions exist.
+If needed later, use PostgreSQL-backed jobs rather than adding a message broker.
 
-Database: PostgreSQL.
+## Technology
 
-ORM: SQLAlchemy 2.
+Python 3.14, aiogram 3, FastAPI, PostgreSQL 16, SQLAlchemy 2 with asyncpg,
+Alembic, Pydantic Settings, Pillow, native Tesseract, uv, Docker Compose, pytest,
+pytest-asyncio, Ruff and mypy. Pillow prepares images before recognition.
+Existing optional ML and vision dependencies are not used by this flow.
 
-Schema migrations: Alembic.
+Tesseract configuration: `OCR_EXECUTABLE` (default `tesseract`) and
+`OCR_LANGUAGES` (default `eng+rus`), and `OCR_PAGE_SEGMENTATION` (default `3`, automatic layout; also `6` or `11`). Docker installs English/Russian language data. The `bot` Compose service runs
+polling and OCR together and reads its token from `.env`; no Homebrew install is needed.
+See [Tesseract command-line documentation](https://tesseract-ocr.github.io/tessdoc/Command-Line-Usage.html).
 
-Configuration: Pydantic Settings.
+## Next modules
 
-Deployment: Docker Compose.
+Preference interpretation and recommendation rules will consume recognized menu
+items plus the current request. A small style reference may support interpretation;
+unknown brand names must not become fabricated beer facts. No rating-history
+module, external canonical beer database or ML taste profile is required.
 
-Unit testing: pytest.
+## LLM cleanup
 
-Recommendation baseline: Python / scikit-learn.
+`BeerNameCleaner` is a replaceable async interface. The bot uses
+`OllamaBeerNameCleaner` with local `qwen2.5:3b`. Requests go to
+`http://ollama:11434/api/chat` with a JSON schema, no streaming, and temperature 0.
+Shared prompts, schemas and source validation live in
+`modules/menu_recognition/beer_names.py`. The old OpenAI adapter is not selected
+and has no automatic fallback path from the local adapter.
 
-OCR implementation is replaceable.
+The Ollama service and model-init container use the `bot` Compose profile.
+`ollama-init` downloads `OLLAMA_MODEL` into the server's persistent `ollama_data`
+volume before polling starts. No model-server port is published to the host.
+All inference is local; Docker on this setup uses CPU. Cleanup is serialized and
+has a 180-second deadline. CPU, RAM and disk are still required even though no
+per-request API payment is made.
 
-Beer matching may initially use RapidFuzz.
-
-## 7. Background Processing
-
-Use PostgreSQL-backed background jobs for the MVP.
-
-Expected background operations:
-- OCR processing.
-- History synchronization.
-- Profile rebuilding.
-
-Use durable job states and idempotent operations.
-
-Workers must safely handle retries, crashes and timeouts
-before production deployment.
-
-Do not add Redis, RabbitMQ or Celery unless justified.
-
-## 8. API and Module Contracts
-
-Modules exchange validated structured data.
-
-The main contracts are:
-
-- Ratings
-- Menu Items
-- Confirmed Beer Candidates
-- Taste Profiles
-- Recommendations
-
-Avoid passing provider-specific representations
-directly into domain logic.
-
-## 9. Architectural Constraints
-
-- Telegram must not perform SQL queries directly.
-- OCR must not call the recommendation engine directly.
-- RecSys must not retrieve Untappd history itself.
-- Unknown beer matches must not be silently accepted.
-- History retrieval must not run on every recommendation.
-- External services must not be mandatory for unit tests.
-- Personal user data must be isolated and protected.
-
-## 10. Future Evolution
-
-Potential later features:
-- Improved recommendation algorithms.
-- Better OCR and entity extraction.
-- Personalized exploration strategies.
-- Additional beer data providers.
-
-These are future capabilities, not MVP requirements.
+No raw OCR fallback is shown on errors. Manual corrections use the same cleaner.
+Tests mock local API calls. Live smoke tests use synthetic menus, not user data.
+See [Ollama chat API](https://docs.ollama.com/api/chat) and
+[Docker setup](https://docs.ollama.com/docker).

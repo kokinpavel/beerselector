@@ -6,9 +6,10 @@ You are a software engineering agent working on UntapptSelector.
 
 UntapptSelector is a Telegram-first beer recommendation system.
 
-The system analyzes a user's personal Untappd beer ratings
-and recommends the best beers from a menu photographed
-by that user.
+The current product direction is a photographed beer menu plus the user's
+current wishes. Untappd history is not required. The present implementation
+step is photo recognition and optional correction; preference parsing and recommendations
+are subsequent steps.
 
 Before implementing features or making architectural changes,
 read these documents:
@@ -20,7 +21,8 @@ read these documents:
 All paths above are relative to the repository root. The application is the `src`
 Python package; use imports such as `from src.core.config import get_settings`.
 Run the API with `uv run uvicorn src.main:app --reload` and the bot with
-`uv run python -m src.telegram.bot` from the repository root.
+`docker compose --profile bot up -d --build bot` from the repository root.
+Run OCR in Docker; do not install Tesseract via Homebrew on the host.
 
 If a document is missing, report it. Do not invent its contents.
 
@@ -28,18 +30,15 @@ If a document is missing, report it. Do not invent its contents.
 
 Build a working, maintainable MVP that:
 
-1. Identifies users through Telegram.
-2. Obtains existing beer ratings from Untappd using a
-   lawful, technically feasible method without Premium or CSV.
-3. Accepts photos of beer menus through Telegram.
-4. Extracts structured beer entries using OCR and parsing.
-5. Matches recognized entries to canonical beer records.
-6. Allows users to correct and confirm recognized entries.
-7. Ranks available beers using a simple personalized RecSys.
-8. Returns TOP-3 recommendations through Telegram.
+1. Accepts a beer-menu photo through Telegram.
+2. Recognizes photo text with a replaceable OCR adapter and extracts only beer
+   names with a replaceable LLM adapter. Never show raw OCR to the user.
+3. Allows the user to optionally correct the list.
+4. Subsequently interprets the user's wishes, such as strong Belgian-style beer.
+5. Subsequently returns up to three matching menu items with explanations.
 
-The product is NOT a generic beer rating application.
-It is a personalized beer selection assistant.
+No Untappd account, historical ratings or external beer catalog is required.
+Never invent missing beer characteristics. Unknown names remain unresolved.
 
 ## Architecture Rules
 
@@ -83,7 +82,7 @@ Preferred stack:
 - Docker Compose
 - pytest
 - Ruff
-- scikit-learn for the initial RecSys
+- Tesseract for local OCR (English and Russian)
 
 For OCR and beer matching, use simple replaceable
 implementations. Select concrete libraries based on testing.
@@ -104,31 +103,21 @@ from these preferences. Explain material conflicts.
 9. Do not add dependencies without explaining why.
 10. Do not claim tests passed unless they were executed.
 
-## ML Rules
+## Recommendation Rules
 
-Start with a simple, interpretable recommendation algorithm.
-
-Do not introduce neural networks, embeddings, vector
-databases, or collaborative filtering without evidence
-that they improve the MVP.
-
-The recommendation engine should accept:
-
-- A user's historical beer ratings.
-- A list of available beer candidates.
-
-It should return:
-
-- Ranked candidate identifiers.
-- Predicted preference scores.
-- Short recommendation explanations.
+Recommendation work is a later step, separate from OCR. Start with explicit,
+interpretable rules using the current request and recognized menu entries.
+Do not introduce ML, neural models, embeddings or external catalogs by default.
+Explain matching criteria rather than presenting fabricated preference scores.
 
 ## OCR Rules
 
 Separate image processing, OCR, menu parsing,
-beer matching, and user confirmation.
+beer matching, and optional user correction. Do not require confirmation.
 
-Keep original recognized text for debugging.
+Keep original recognized text internally for debugging. Clean it through the LLM
+before displaying names; on cleanup failure never fall back to displaying raw OCR.
+Prices, ABV, volumes, headings and descriptions must not appear in the names list.
 
 Do not silently replace uncertain matches with
 supposedly correct beer identities.
@@ -137,7 +126,8 @@ Allow unrecognized beers to remain unresolved.
 
 ## Untappd Integration Rules
 
-The project must not depend on Untappd Premium or CSV export.
+Untappd is optional legacy functionality, outside the core photo-menu flow.
+The project must not depend on its API, Premium or CSV export.
 
 Do not assume access to private or restricted APIs.
 

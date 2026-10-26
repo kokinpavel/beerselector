@@ -1,155 +1,61 @@
-
 # UntapptSelector — Product Specification
 
-## 1. Vision
+## Objective
 
-UntapptSelector is a personalized beer recommendation assistant
-operated through a Telegram bot.
+Help a Telegram user choose beer from a real menu based on their current wishes,
+for example: “strong, Belgian-style”. No Untappd account, historical ratings or
+pre-existing database of beer brands is required.
 
-Its purpose is to help a user choose the beer they are most
-likely to enjoy from a real-world beer menu.
+## Target journey
 
-Recommendations are based primarily on the user's personal
-beer rating history from Untappd.
+1. User sends a menu photo, optionally with wishes in the caption.
+2. Bot recognizes the text, passes it through an LLM and presents only beer names.
+3. User may optionally correct the list.
+4. Bot asks for wishes if absent, then interprets style and strength criteria.
+5. Bot offers up to three matching entries with understandable explanations.
 
-## 2. Problem
+Steps 4–5 are planned. The current development scope is steps 1–3.
 
-Users may encounter beer menus containing dozens of unfamiliar
-beers.
+## Implemented
 
-Choosing based on general community ratings does not
-necessarily reflect individual taste.
+- Telegram `/start` persists a user with an internal UUID.
+- A private-chat photo handler uses a replaceable local Tesseract OCR adapter.
+- Local Ollama LLM cleanup extracts only beer product names with a strict JSON schema.
+- Source references and name words are validated; raw OCR, ABV and prices are
+  not sent to the user. Original text remains internal.
+- User can replace the list with corrected text, display it or cancel.
+- Captions are retained in the draft but not yet interpreted.
+- Drafts are in memory, scoped by Telegram user and chat, and lost on restart.
+- PostgreSQL, Alembic, FastAPI health check and tests are available.
 
-The user already has useful preference information stored
-in their personal Untappd beer history.
+## Current limits
 
-UntapptSelector should use that information to make
-personalized recommendations.
+LLM extraction depends on OCR quality and may omit unreadable names. It does
+not verify canonical beer identity. Optional editing is available, with no
+confirmation requirement. The Ollama model must be downloaded; no paid API key is required.
+No recommendations, taste predictions, style inference or preference extraction
+are implemented. No representative real-menu recognition quality is claimed.
+Tesseract and English/Russian language data are installed in the Docker image.
+Use the Compose bot service; no host OCR installation is required.
 
-## 3. Primary User Journey
+## Next scope
 
-1. User opens the UntapptSelector Telegram bot.
-2. User links or identifies their Untappd profile.
-3. The system obtains historical beer ratings.
-4. The system builds a personal taste profile.
-5. User takes a photo of an available beer menu.
-6. User sends the photo to the Telegram bot.
-7. The system performs OCR on the photo.
-8. The system extracts individual beer entries.
-9. The system matches the entries to known beers.
-10. The user reviews and corrects recognized beers.
-11. The recommendation engine ranks available beers.
-12. The bot presents the TOP-3 personalized choices.
+Interpret free-text wishes using an explicit small vocabulary and a documented
+style reference; ask for clarification when the request is unclear. Rank only
+recognized menu entries and expose missing information. Do not infer specific
+beer properties from an unfamiliar brand name.
 
-Historical data acquisition must be implemented through
-a verified, permitted mechanism that does not require
-Untappd Premium or CSV export.
+Durable menu history and background workers can be added when required; they
+are not part of the current in-memory review flow.
 
-## 4. Main Product Capabilities
+## Legacy Untappd functionality
 
-### User Management
-- Telegram-based identification.
-- Association with a personal Untappd profile.
-- Persistent personal preferences.
+`/untappd` still saves a user-supplied profile. It neither verifies ownership nor
+imports ratings, and is not required for menu recognition. API import is blocked
+pending commercial access and permission for the proposed use. See
+[integration findings](untappd-integration.md).
 
-### Beer History
-- Import historical beer ratings.
-- Normalize beer names and identifiers.
-- Preserve individual ratings.
-- Support future history updates.
+## Out of scope
 
-### Menu Recognition
-- Receive photos through Telegram.
-- Recognize text using OCR.
-- Extract individual beer entries.
-- Identify breweries, beer names and available attributes.
-- Support uncertain or incomplete recognition.
-- Allow user confirmation and corrections.
-
-### Recommendation System
-- Build a profile from historical ratings.
-- Evaluate beers available on the current menu.
-- Predict personal preference scores.
-- Rank candidate beers.
-- Return TOP-3 with short explanations.
-
-## 5. MVP Scope
-
-The MVP includes:
-
-- Telegram Bot.
-- Beer history acquisition interface.
-- Persistent database.
-- Photo processing.
-- OCR.
-- Menu parsing.
-- Beer matching.
-- User confirmation.
-- Simple personalized recommendation algorithm.
-- TOP-3 results.
-
-## 6. Out of Scope
-
-Do not implement these unless explicitly requested:
-
-- Web frontend.
-- Mobile applications.
-- Social recommendation features.
-- Collaborative filtering.
-- Complex neural recommendation models.
-- Geolocation-based venue discovery.
-- Subscription payments.
-- Large distributed infrastructure.
-
-## 7. Success Criteria
-
-The MVP is successful when:
-
-1. A Telegram user can start the bot.
-2. The system can load a usable personal rating history.
-3. The user can submit a photo of a beer menu.
-4. The menu is converted into structured beer candidates.
-5. The user can correct recognition errors.
-6. The system produces a ranked recommendation list.
-7. The bot displays TOP-3 recommendations.
-8. The workflow is covered by automated tests.
-
-## 8. Product Principles
-
-Personalization over global popularity.
-
-User confirmation over silent OCR assumptions.
-
-Simplicity over algorithmic complexity.
-
-Replaceable integrations over vendor lock-in.
-
-Correctness and transparency over fabricated confidence.
-
-## 9. Current Project Status
-
-System architecture has been designed.
-
-Data architecture has been designed.
-
-Infrastructure scaffolding is in progress.
-
-Telegram `/start` persists internal users. In private chats, `/untappd username`
-or a profile URL saves an unverified external profile; `/untappd` shows it.
-Profile changes, user isolation, concurrent commands and migrations are covered
-by automated tests against a disposable PostgreSQL database.
-
-The full end-to-end MVP is not yet implemented.
-
-Untappd history acquisition is blocked pending a commercial agreement.
-The developer-portal notice supplied by the project owner states that new API
-access requires a commercial agreement and existing tokens may stop working.
-
-The official API documents history access, but project credentials and permission
-for persistent storage and personalized analysis are not verified. Published API
-terms restrict caching, beer database creation and analytics. See
-[the integration findings](untappd-integration.md). Saving a username does not import history or prove
-account ownership.
-
-Update this section only when implementation progress
-has actually been verified.
+Web frontend, mobile app, social features, payments, collaborative filtering,
+large ML models, distributed infrastructure and automatic external catalog imports.

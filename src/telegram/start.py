@@ -19,12 +19,14 @@ def create_start_router(start_user: StartUser) -> Router:
             return
         try:
             await start_user.execute(message.from_user.id)
-        except SQLAlchemyError:
+        except SQLAlchemyError, OSError:
             logger.error("User registration failed")
             await message.answer("Не удалось запустить бота. Попробуйте /start ещё раз чуть позже.")
             return
         await message.answer(
-            "Привет! Твой профиль сохранён.\nУкажи свой Untappd: /untappd username"
+            "Привет! Твой профиль сохранён.\n"
+            "Пришли фото пивного меню — распознаю список для проверки. "
+            "Исправления можно отправить текстом. /cancel — отменить."
         )
 
     return router

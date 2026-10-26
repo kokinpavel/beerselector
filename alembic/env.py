@@ -12,7 +12,7 @@ from src.modules.users.models import User  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Import future model modules here so autogenerate sees their tables.
 target_metadata = Base.metadata
